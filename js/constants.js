@@ -47,8 +47,10 @@ export const PUMP_STAGES = 4;
 export const DEFLATE_HOLD_MS = 900;
 export const DEFLATE_STAGE_MS = 1000;
 
-// Rocks: ~1s wobble warning before the drop.
+// Rocks: ~1s wobble warning before the drop; standing underneath holds the
+// rock up, and it releases this long after you step away.
 export const ROCK_SHAKE_MS = 1000;
+export const ROCK_RELEASE_MS = 2000;
 export const ROCK_CRUMBLE_MS = 500;
 
 // Hurry-up: after this long in a round, enemies speed up and music quickens.
@@ -96,11 +98,24 @@ export function veggieForRound(round) {
 }
 export const VEGGIE_LIFETIME_MS = 10000;
 
-// Palette (dirt band fills measured from the arcade's round-1 screen)
+// Palette. Rounds 1-4 use the dirt colors measured from the arcade's round-1
+// screen; the palette rotates every 4th round like the original.
+export const DIRT_PALETTES = [
+  { band: ['#ffb800', '#de6800', '#b82100', '#970000'],
+    divider: ['#dede00', '#ffb800', '#de6800', '#b82100'] },
+  { band: ['#8cde00', '#00b851', '#008068', '#004840'],
+    divider: ['#deff40', '#8cde00', '#00b851', '#008068'] },
+  { band: ['#ffb8de', '#de68b8', '#b82171', '#970046'],
+    divider: ['#ffe0f0', '#ffb8de', '#de68b8', '#b82171'] },
+  { band: ['#b8b8ff', '#6868de', '#2929b8', '#101078'],
+    divider: ['#e0e0ff', '#b8b8ff', '#6868de', '#2929b8'] },
+];
+export function dirtPalette(round) {
+  return DIRT_PALETTES[Math.floor((round - 1) / 4) % DIRT_PALETTES.length];
+}
+
 export const COLORS = {
   sky: '#000097',
-  band: ['#ffb800', '#de6800', '#b82100', '#970000'],
-  bandDivider: ['#dede00', '#ffb800', '#de6800', '#b82100'],
   hudText: '#ffffff',
   score: '#ff2020',
   tunnel: '#000000',

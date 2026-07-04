@@ -37,14 +37,16 @@ export class Game {
   startGame() {
     this.score = 0;
     this.lives = 2;
-    this.round = 1;
+    // Debug/testing: start at ?round=N
+    const p = Number(new URLSearchParams(location.search).get('round'));
+    this.round = p >= 1 && p <= 99 ? Math.floor(p) : 1;
     this.nextExtend = EXTEND_FIRST;
     this.startRound();
   }
 
   startRound() {
     const cfg = roundConfig(this.round);
-    this.grid = new DirtGrid();
+    this.grid = new DirtGrid(this.round);
     for (const [x0, y0, x1, y1] of cfg.tunnels) this.grid.carveTunnel(x0, y0, x1, y1);
     // Arcade-style start: central shaft down to a 3-cell-wide chamber whose
     // floor is the top of the third dirt layer.
@@ -63,7 +65,11 @@ export class Game {
       en.speedScale = cfg.speedScale;
       return en;
     });
-    this.rocks = cfg.rocks.map((r) => new Rock(this, r.x, r.y));
+    // Safety: never spawn a rock whose support is already dug out (it would
+    // drop immediately, possibly onto the player).
+    this.rocks = cfg.rocks
+      .filter((r) => !this.grid.isCarved(r.x, r.y + 1) && !this.grid.isCarved(r.x, r.y))
+      .map((r) => new Rock(this, r.x, r.y));
     this.veggie = null;
     this.rocksDropped = 0;
     this.floaters = [];
@@ -206,6 +212,8 @@ export class Game {
       e.inflation = 0;
       e.latched = false;
       e.prevCell = null;
+      e.targetX = undefined;
+      e.stuckMs = 0;
     }
     this.setState('ready');
     this.audio.roundStart();
@@ -247,9 +255,10 @@ export class Game {
     // Music gate
     this.audio.walkMusic(dt, this.player.moving && !this.player.dead, this.player.digging);
 
-    // Last-enemy-flees rule
+    // Last-enemy-flees rule: the survivor breaks off and makes for the
+    // top-left surface exit (even if it's mid-ghost when it becomes last).
     const alive = this.enemies.filter((e) => !e.dead);
-    if (alive.length === 1 && !alive[0].fleeing && alive[0].state === 'walk') {
+    if (alive.length === 1 && !alive[0].fleeing && alive[0].state !== 'popped') {
       alive[0].flee();
     }
     // Round clear

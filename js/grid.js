@@ -6,13 +6,14 @@
 
 import {
   CANVAS_W, CANVAS_H, TILE, GRID_W, GRID_H, FIELD_Y, DIRT_TOP_ROW,
-  SURFACE_ROW, BANDS, COLORS, DIRS, opposite,
+  SURFACE_ROW, BANDS, COLORS, DIRS, opposite, dirtPalette,
 } from './constants.js';
 
 const EDGE_BIT = { up: 1, right: 2, down: 4, left: 8 };
 
 export class DirtGrid {
-  constructor() {
+  constructor(round = 1) {
+    this.palette = dirtPalette(round);
     // Per cell: edge bitmask (dug-through edges) + carvedCenter flag.
     this.edges = new Uint8Array(GRID_W * GRID_H);
     this.carved = new Uint8Array(GRID_W * GRID_H);
@@ -38,11 +39,11 @@ export class DirtGrid {
     BANDS.forEach((band, i) => {
       const y0 = FIELD_Y + band.rows[0] * TILE;
       const y1 = FIELD_Y + (band.rows[1] + 1) * TILE;
-      c.fillStyle = COLORS.band[i];
+      c.fillStyle = this.palette.band[i];
       c.fillRect(0, y0, CANVAS_W, y1 - y0);
       // Arcade dirt: a 1px divider line every 16px in the layer-above color,
       // plus a light speckle texture.
-      c.fillStyle = COLORS.bandDivider[i];
+      c.fillStyle = this.palette.divider[i];
       for (let y = y0; y < y1; y += TILE) c.fillRect(0, y, CANVAS_W, 1);
       let seed = 1234 + i * 999;
       const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -51,7 +52,7 @@ export class DirtGrid {
       }
     });
     // 8px lip of layer-1 dirt above the first tunnel row.
-    c.fillStyle = COLORS.band[0];
+    c.fillStyle = this.palette.band[0];
     c.fillRect(0, FIELD_Y + BANDS[0].rows[0] * TILE - 8, CANVAS_W, 8);
   }
 

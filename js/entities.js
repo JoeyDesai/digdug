@@ -5,7 +5,7 @@ import {
   TILE, GRID_W, GRID_H, FIELD_Y, SURFACE_ROW, CANVAS_W,
   SPEED, DIRS, opposite, depthLayer,
   PUMP_RANGE, PUMP_STAGES, DEFLATE_HOLD_MS, DEFLATE_STAGE_MS,
-  ROCK_SHAKE_MS, ROCK_CRUMBLE_MS,
+  ROCK_SHAKE_MS, ROCK_CRUMBLE_MS, ROCK_RELEASE_MS,
   GHOST_MIN_MS, ghostDelay,
   FIRE_CHARGE_MS, FIRE_ACTIVE_MS, FIRE_COOLDOWN_MS, FIRE_RANGE_TILES,
 } from './constants.js';
@@ -201,9 +201,11 @@ export class Pump {
       this.release();
       return;
     }
-    // Hit an enemy?
+    // Hit an enemy? Ghosts are pumpable too while over an open tunnel
+    // (the arcade lets you catch eyes crossing your tunnel).
     for (const e of this.g.enemies) {
-      if (e.dead || e.ghost || e.state === 'popped') continue;
+      if (e.dead || e.state === 'popped') continue;
+      if (e.ghost && !this.g.grid.isCarved(e.cx, e.cy)) continue;
       if (Math.abs(tipX - e.x) < 10 && Math.abs(tipY - e.y) < 10) {
         this.target = e;
         e.latch();
@@ -270,7 +272,17 @@ export class Enemy {
   get cx() { return cellX(this.x); }
   get cy() { return cellY(this.y); }
 
-  latch() { this.latched = true; }
+  latch() {
+    this.latched = true;
+    if (this.ghost) {
+      // Harpooned mid-float: solidify on the spot (snapped to the tunnel).
+      this.ghost = false;
+      this.x = centerX(this.cx);
+      this.y = centerY(this.cy);
+      this.targetX = undefined;
+      this.ghostTimer = ghostDelay(this.g.round, this.type === 'fygar');
+    }
+  }
   unlatch() { this.latched = false; this.deflateT = 0; }
 
   inflate() {
@@ -367,41 +379,70 @@ export class Enemy {
 
     if (this.ghost) {
       this.ghostT += ms;
-      // Float straight toward the player, through everything.
-      const dx = player.x - this.x, dy = player.y - this.y;
+      // Float straight through everything: toward the player normally, or
+      // toward the top-left surface when escaping.
+      const tx = this.fleeing ? centerX(1) : player.x;
+      const ty = this.fleeing ? centerY(SURFACE_ROW) : player.y;
+      const dx = tx - this.x, dy = ty - this.y;
       const dist = Math.hypot(dx, dy) || 1;
-      const sp = SPEED.ghost * this.speedScale * dt;
+      const sp = SPEED.ghost * (this.fleeing ? 1.7 : 1) * this.speedScale * dt;
       this.x += (dx / dist) * sp;
       this.y += (dy / dist) * sp;
       this.y = Math.max(centerY(SURFACE_ROW), this.y);
+      if (this.fleeing && this.cy <= SURFACE_ROW && this.x <= centerX(1)) {
+        this.dead = true;
+        this.escaped = true;
+        this.g.onEnemyEscaped();
+        return;
+      }
       // Re-solidify when inside a carved tunnel cell (and near its center).
       if (this.ghostT > GHOST_MIN_MS && grid.isCarved(this.cx, this.cy)) {
         const ccx = centerX(this.cx), ccy = centerY(this.cy);
-        if (Math.abs(this.x - ccx) < 4 && Math.abs(this.y - ccy) < 4) {
+        if (Math.abs(this.x - ccx) < 5 && Math.abs(this.y - ccy) < 5) {
           this.x = ccx; this.y = ccy;
           this.ghost = false;
           this.prevCell = null;
+          this.stuckMs = 0;
+          this.targetX = undefined;
           this.ghostTimer = ghostDelay(round, this.type === 'fygar');
         }
       }
       return;
     }
 
-    // Tunnel walking: move ahead; decide at cell centers.
-    const sp = (this.fleeing ? SPEED.enemyFast : this.baseSpeed) * this.speedScale * dt;
-    const ccx = centerX(this.cx), ccy = centerY(this.cy);
-    const d = DIRS[this.dir];
-    const atCenterAhead =
-      (d.dx !== 0 && ((d.dx > 0 && this.x >= ccx) || (d.dx < 0 && this.x <= ccx))) ||
-      (d.dy !== 0 && ((d.dy > 0 && this.y >= ccy) || (d.dy < 0 && this.y <= ccy)));
-
-    if (atCenterAhead && Math.abs(this.x - ccx) < sp + 1 && Math.abs(this.y - ccy) < sp + 1) {
-      this.x = ccx; this.y = ccy;
-      this.decide();
+    // Stuck watchdog: an enemy that can't make progress (boxed into a
+    // dead-end pocket, bad spawn, etc.) ghosts out instead of freezing.
+    const cellKey = this.cx + this.cy * 100;
+    if (cellKey !== this.lastCellKey) {
+      this.lastCellKey = cellKey;
+      this.stuckMs = 0;
+    } else {
+      this.stuckMs = (this.stuckMs || 0) + ms;
+      if (this.stuckMs > 2500 && !this.latched && this.fireState === 'none') {
+        this.stuckMs = 0;
+        this.ghost = true;
+        this.ghostT = 0;
+        this.g.audio.sfx('ghost');
+        return;
+      }
     }
-    const d2 = DIRS[this.dir];
-    this.x += d2.dx * sp;
-    this.y += d2.dy * sp;
+
+    // Tunnel walking: pick a neighboring cell and walk to its center; decide
+    // again on arrival. (Never re-decide mid-cell — that caused oscillation.)
+    const sp = (this.fleeing ? SPEED.enemyFast : this.baseSpeed) * this.speedScale * dt;
+    if (this.targetX === undefined) this.pickTarget();
+    if (this.ghost) return;                    // decide() may ghost (flee/dead end)
+    const dx = this.targetX - this.x, dy = this.targetY - this.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= sp) {
+      this.x = this.targetX;
+      this.y = this.targetY;
+      this.pickTarget();
+      if (this.ghost) return;
+    } else {
+      this.x += (dx / dist) * sp;
+      this.y += (dy / dist) * sp;
+    }
 
     if (this.fleeing) {
       // Escape off the left edge of the surface row.
@@ -410,6 +451,21 @@ export class Enemy {
         this.escaped = true;
         this.g.onEnemyEscaped();
       }
+    }
+  }
+
+  // Choose a direction at the current cell center, then set the walk target:
+  // the neighbor's center if passable, else stay put and retry on arrival.
+  pickTarget() {
+    this.decide();
+    if (this.ghost) return;
+    const d = DIRS[this.dir];
+    if (this.g.grid.canMove(this.cx, this.cy, this.dir)) {
+      this.targetX = centerX(this.cx + d.dx);
+      this.targetY = centerY(this.cy + d.dy);
+    } else {
+      this.targetX = centerX(this.cx);
+      this.targetY = centerY(this.cy);
     }
   }
 
@@ -450,8 +506,9 @@ export class Enemy {
   }
 
   flee() {
+    // Keep ghost state if mid-float — the ghost target switches to the exit.
     this.fleeing = true;
-    this.ghost = false;
+    this.fireState = 'none';
   }
 
   crush() {
@@ -551,12 +608,18 @@ export class Rock {
         if (this.t >= ROCK_SHAKE_MS) this.state = 'waiting';
         break;
       case 'waiting': {
-        // The arcade rock waits until the player steps out from underneath.
-        const playerBelow = player.cx === this.cx &&
-          player.cy === this.cy + 1 && !player.dead;
-        if (!playerBelow) {
-          this.state = 'falling';
-          this.g.audio.sfx('rockFall');
+        // Standing under an undermined rock "holds it up" indefinitely.
+        // Once the player steps away, it hangs for a beat, then drops.
+        const playerBelow = !player.dead && player.cx === this.cx &&
+          player.cy >= this.cy + 1 && Math.abs(player.x - this.x) < TILE * 0.75;
+        if (playerBelow) {
+          this.releaseMs = 0;
+        } else {
+          this.releaseMs = (this.releaseMs || 0) + ms;
+          if (this.releaseMs >= ROCK_RELEASE_MS) {
+            this.state = 'falling';
+            this.g.audio.sfx('rockFall');
+          }
         }
         break;
       }
