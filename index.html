@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DIG DUG</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #game {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    height: 100vh;
+    max-width: 100vw;
+    aspect-ratio: 224 / 288;
+    object-fit: contain;
+  }
+  #hint {
+    position: fixed;
+    bottom: 8px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: #444;
+    font-family: monospace;
+    font-size: 12px;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="224" height="288"></canvas>
+<div id="hint">ARROWS / WASD to move &nbsp;·&nbsp; SPACE to pump &nbsp;·&nbsp; ENTER to start &nbsp;·&nbsp; M to mute</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
